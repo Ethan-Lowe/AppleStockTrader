@@ -79,7 +79,6 @@ class RollingMeanStrategy(Strategy):
        
 class BuyAndHoldStrategy(Strategy):
     def buying_strategy(self, iterated_price_list):
-        #print("buying and holding...")
         return "Buy"
     def selling_strategy(self, iterated_price_list, purchased_prices,type):
         if type == "Buy":
@@ -89,10 +88,7 @@ class BuyAndHoldStrategy(Strategy):
 
 class Graphing:
     def plot_portfolio_values_with_stats(self, portfolio_values_dicts, stats1, stats2, final_metrics1, final_metrics2):
-        # Create a grid for the plots
         fig = plt.figure(figsize=(14, 8))
-
-        # Add the portfolio values plot
         ax1 = fig.add_subplot(121)
         for label, values in portfolio_values_dicts.items():
             ax1.plot(values, label=label)
@@ -101,27 +97,25 @@ class Graphing:
         ax1.set_ylabel('Portfolio Value ($)')
         ax1.legend()
         ax1.grid(True)
-        ax1.patch.set_edgecolor('black')  # Set edge color
-        ax1.patch.set_linewidth(2)  # Set line width
+        ax1.patch.set_edgecolor('black')
+        ax1.patch.set_linewidth(2)
 
-        # Add stats for the first strategy, including final metrics
         ax2 = fig.add_subplot(222)
         ax2.axis('off')
         ax2.set_title('Buy and Hold Strategy Stats')
         stats_text1 = self.create_stats_text(stats1) + "\n\nFinal Metrics:\n" + self.create_metrics_text(final_metrics1)
         ax2.text(0.5, 0.5, stats_text1, va='center', ha='center', fontsize=10)
-        ax2.patch.set_edgecolor('black')  # Set edge color
-        ax2.patch.set_linewidth(2)  # Set line width
+        ax2.patch.set_edgecolor('black') 
+        ax2.patch.set_linewidth(2)
 
-        # Add stats for the second strategy, including final metrics
         ax3 = fig.add_subplot(224)
         ax3.axis('off')
         ax3.set_title('Active Strategy Stats')
         stats_text2 = self.create_stats_text(stats2) + "\n\nFinal Metrics:\n" + self.create_metrics_text(final_metrics2)
         ax3.text(0.5, 0.5, stats_text2, va='center', ha='center', fontsize=10)
         ax3.grid = True
-        ax3.patch.set_edgecolor('black')  # Set edge color
-        ax3.patch.set_linewidth(2)  # Set line width
+        ax3.patch.set_edgecolor('black')
+        ax3.patch.set_linewidth(2)
 
         plt.tight_layout()
         plt.show()
@@ -237,7 +231,7 @@ class TradeAnalysis:
         total_trades = len(listvar)
         profit_loss_values = [trade['profit_or_loss'] for trade in listvar if trade['profit_or_loss'] is not None]
 
-        if not profit_loss_values:  # If the list is empty, return zeros
+        if not profit_loss_values:
             return {
                 "total_trades": 0,
                 "total_profit_loss": 0,
@@ -286,29 +280,30 @@ class MongoMovesHoldings:
             prices[trade_type] = holding.get('price_when_added', []) if holding else []
         return prices
     
-    def collective_holdings_updates(self, update):
-        for holding in update:
+    def collective_holdings_updates(self, buy_shares, total_buy_value, buy_list, total_short_shares, total_short_value, short_list):
+
+        holdings_to_update = [
+            {'type': 'Buy', 'count': buy_shares, 'total_value': total_buy_value, 'price_when_added': buy_list},
+            {'type': 'Short', 'count': total_short_shares, 'total_value': total_short_value, 'price_when_added': short_list}
+        ]
+
+        for holding in holdings_to_update:
             trade_type = holding['type']
             self.Trading_Holdings.update_one(
                 {'type': trade_type},
                 {'$set': {
                     'count': holding['count'],
                     'total_value': holding['total_value'],
-                    'price_when_added': holding['prices_when_added']
+                    'price_when_added': holding['price_when_added']
                 }},
                 upsert=True
             )
-
 
     def get_current_holdings(self):
         self.connect()
         holdings = list(self.Trading_Holdings.find({}, {'_id': 0}))
         self.disconnect()
         return holdings
-
-        
-
-
 
 
 class MongoMovesTrades:
@@ -329,6 +324,7 @@ class MongoMovesTrades:
             'price': 0,
             'action': None,
             'step': 0,
+            "closing_step" : None,
             'closing_price': None,
             'profit_or_loss': None,
         }
@@ -337,28 +333,34 @@ class MongoMovesTrades:
         for trade in initial_trades:
             self.Trading_Trades.insert_one(trade)
 
-    def add_trade(self, price, action, step):
-        trade = {
-            'price': price,
-            'action': action,
-            'step': step,
-            'closing_step': None,
-            'closing_price': None,
-            'profit_or_loss': None,
-        }
-        self.Trading_Trades.insert_one(trade)
+    def update_trades_with_logs(self, trades_to_update):
 
-    def update_trade(self, price, action, sold_price, profit_or_loss, closing_step):
-        self.Trading_Trades.update_one(
-            {'price': price},
-            {'$set': {
-                "action": action,
-                'closing_price': sold_price,
-                'profit_or_loss': profit_or_loss,
-                'closing_step': closing_step
-            }}
-        )
+        for trade in trades_to_update['buying_buys']:
+            self.Trading_Trades.insert_one(trade)
+        for trade in trades_to_update['buying_shorts']:
+            self.Trading_Trades.insert_one(trade)
 
+        for trade in trades_to_update['selling_buys']:
+            self.Trading_Trades.update_one(
+                {'price': trade['price'], 'action': 'Buy'},
+                {'$set': {
+                    'action': 'Sell',
+                    'closing_step': trade['closing_step'],
+                    'closing_price': trade['closing_price'],
+                    'profit_or_loss': trade['profit_or_loss']
+                }}
+            )
+
+        for trade in trades_to_update['selling_shorts']:
+            self.Trading_Trades.update_one(
+                {'price': trade['price'], 'action': 'Short'},
+                {'$set': {
+                    'action': 'Cover',
+                    'closing_step': trade['closing_step'],
+                    'closing_price': trade['closing_price'],
+                    'profit_or_loss': trade['profit_or_loss']
+                }}
+            )
 
 class Backtesting():
     def __init__(self, strategy):
@@ -379,116 +381,91 @@ class Backtesting():
         self.mongo_holdings.reset_holdings()
         self.mongo_trades.reset_trades()
 
-        # main run through price data
         for current_price in self.open_prices:
             step +=1
-            print(step)
             covered_values.append(current_price)
-            trades_to_update = {}
-            holdings_to_update = [{'type': 'Buy', 'count': 0, "total_value":0,"prices_when_added" : []},
-            {'type': 'Short', 'count': 0, "total_value":0,"prices_when_added" : []}]
+
+            trades_to_update = {
+                'buying_buys': [],
+                'buying_shorts': [],
+                'selling_buys': [],
+                'selling_shorts': []
+                                    }
 
             prices_dict = self.mongo_holdings.get_prices_for_all_types()
-
             bought_list = prices_dict["Buy"]
             short_list = prices_dict["Short"]
-
             total_buy_shares = len(bought_list)
             total_short_shares = len(short_list)
             
             # SELLING
-            #buys
+            trade_types = [
+                {"type": "Buy", "unload_dict": self.strategy.selling_strategy(iterated_price_list=covered_values, purchased_prices=prices_dict["Buy"], type="Buy"), "trade_list": bought_list, "update_key": 'selling_buys'},
+                {"type": "Short", "unload_dict": self.strategy.selling_strategy(iterated_price_list=covered_values, purchased_prices=prices_dict["Short"], type="Short"), "trade_list": short_list, "update_key": 'selling_shorts'}
+                    ]           
             
-            buy_unload_dict = self.strategy.selling_strategy(iterated_price_list=covered_values, purchased_prices=prices_dict["Buy"], type="Buy")
+            for trade in trade_types:
+                unloads = trade["unload_dict"][f"{trade['type']}_Unloads_Front"] + trade["unload_dict"][f"{trade['type']}_Unloads_Back"]
+                
+                for item in unloads:
+                    trades_to_update[trade["update_key"]].append({
+                        "price": item,
+                        'action': 'Sell' if trade['type'] == 'Buy' else 'Cover',
+                        'closing_step': step,
+                        'closing_price': current_price,
+                        'profit_or_loss': current_price - item if trade['type'] == 'Buy' else item - current_price
+                    })
+                
+                trade["trade_list"][:] = [item for item in trade["trade_list"] if item not in unloads]
+                if trade['type'] == 'Buy':
+                    total_funds += len(unloads) * current_price 
+                else:
+                    total_funds -= len(unloads) * current_price 
 
-            front = len(buy_unload_dict["Buy_Unloads_Front"])
-            back = len(buy_unload_dict["Buy_Unloads_Back"])
+            total_buy_shares = len(bought_list)
+            total_short_shares = len(short_list)
 
-            if front or back > 0:
-                if front > 0:
-                    for item in buy_unload_dict["Buy_Unloads_Front"]:
-                        #LOG SELLING A BUY, CAN PROB GROUP THESE
-                        pass
-                    del bought_list[:front]
-                    total_buy_shares = len(bought_list)
-                if back > 0:
-                    for item in buy_unload_dict["Buy_Unloads_Back"]:
-                        pass
-                        #LOG SELLING A BUY, CAN PROB GROUP THESE
-                    del bought_list[-back:]
-                    total_buy_shares = len(bought_list)
-
-                reduction_shares = (front + back)*-1
-                total_funds += (reduction_shares*current_price)
-                    
-                    
-            #shorts
-            short_unload_dict = self.strategy.selling_strategy(iterated_price_list=covered_values, purchased_prices=prices_dict["Short"],type="Short")
-            front = len(short_unload_dict["Short_Unloads_Front"])
-            back = len(short_unload_dict["Short_Unloads_Back"])
-
-            if front or back > 0:
-                if front > 0:
-                    for item in short_unload_dict["Short_Unloads_Front"]:
-                        pass
-                        #LOG SELLING A SHORT, CAN PROB GROUP THESE
-                    del short_list[:front]
-                    total_short_shares = len(short_list)
-
-                if back > 0:
-                    for item in short_unload_dict["Short_Unloads_Back"]:
-                        #LOG SELLING A SHORT, CAN PROB GROUP THESE
-                        self.mongo_trades.update_trade(price = item, action = "Cover", sold_price=current_price, profit_or_loss=(current_price-item))
-                    del short_list[-back:]
-                    total_short_shares = len(short_list)
-
-                front_sum = sum(short_list[:front])
-                back_sum = sum(short_list[-back:])
-                total_sum = front_sum + back_sum
-
-                reduction_shares = (front + back)*-1
-                short_profit = total_sum + (reduction_shares*current_price)
-                total_funds += short_profit
 
             # BUYING
-            #buys
-            if total_funds >= current_price:
-                buy_outcome = self.strategy.buying_strategy(iterated_price_list=covered_values)
+            buy_outcome = self.strategy.buying_strategy(iterated_price_list=covered_values)
                 
-                if buy_outcome in ["Buy", "Short"]:
+            if buy_outcome in ["Buy", "Short"] and total_funds > current_price:
+                if buy_outcome == "Buy":
+                    total_buy_shares += 1
+                    total_funds -= current_price
+                    index = bisect.bisect_left(bought_list, current_price)
+                    bought_list.insert(index, current_price)
+                    trades_to_update['buying_buys'].append({
+                        'price': current_price,
+                        'action': 'Buy',
+                        'step': step,
+                        'closing_step': None,
+                        'closing_price': None,
+                        'profit_or_loss': None
+                    })
+                elif buy_outcome == "Short":
+                    total_short_shares += 1
+                    total_funds += current_price
+                    index = bisect.bisect_left(short_list, current_price)
+                    short_list.insert(index, current_price)
+                    trades_to_update['buying_shorts'].append({
+                        'price': current_price,
+                        'action': 'Short',
+                        'step': step,
+                        'closing_step': None,
+                        'closing_price': None,
+                        'profit_or_loss': None
+                    })
 
-                    if buy_outcome == "Buy":
-                        total_buy_shares += 1
-                        #LOG THE TRADE (BUYING A BUY) 
-                        total_funds -= current_price
-                        index = bisect.bisect_left(bought_list, current_price)
-                        bought_list.insert(index, current_price)
-                    elif buy_outcome == "Short":
-                        total_short_shares += 1
-                        #LOG THAT MF TRADE (BUYING A SHORT)
-                        total_funds += current_price
-                        index = bisect.bisect_left(short_list, current_price)
-                        short_list.insert(index, current_price)
-
-            #UPDATE HOLDINGS AT ONCE
-            holdings_to_update[0]["count"] = total_buy_shares
-            holdings_to_update[0]["total_value"] = (total_buy_shares*current_price)
-            holdings_to_update[0]["prices_when_added"] = bought_list
-
+            #UPDATE MONGO AND METRICS
             current_short_value = sum(short_list) - (current_price * total_short_shares)
-            holdings_to_update[1]["count"] = total_short_shares
-            holdings_to_update[1]["total_value"] = current_short_value
-            holdings_to_update[1]["prices_when_added"] = short_list
+            current_buy_value =(total_buy_shares*current_price)
 
-            self.mongo_holdings.collective_holdings_updates(holdings_to_update)
+            self.mongo_holdings.collective_holdings_updates(buy_shares=total_buy_shares, total_buy_value=current_buy_value, buy_list=bought_list, total_short_shares=total_short_shares, total_short_value=current_short_value, short_list=short_list)
+            self.mongo_trades.update_trades_with_logs(trades_to_update=trades_to_update)
 
             money = total_funds + (total_buy_shares*current_price) + current_short_value
-
             portfolio_values.append(money)
-
-            #UPDATE TRADES AT ONCE
-
-
 
         final_metrics = {
             'total_funds': total_funds,
